@@ -1,0 +1,17 @@
+services:
+  test:
+    build: ./worker
+    working_dir: /app
+    volumes:
+      - ./tests:/app/tests
+      - ./api:/app/api
+      - ./worker:/app/worker_src
+    environment:
+      TEST_DATABASE_URL: postgresql://scheduler:scheduler@db:5432/scheduler
+      DATABASE_URL: postgresql://scheduler:scheduler@db:5432/scheduler
+    entrypoint: ["sh", "-c"]
+    command:
+      - "pip install -q -r tests/requirements-test.txt -r api/requirements.txt && pytest tests -v"
+    depends_on:
+      db:
+        condition: service_healthy

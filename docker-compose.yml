@@ -1,0 +1,66 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: scheduler
+      POSTGRES_PASSWORD: scheduler
+      POSTGRES_DB: scheduler
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scheduler"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./api
+    environment:
+      DATABASE_URL: postgresql://scheduler:scheduler@db:5432/scheduler
+      JWT_SECRET_KEY: dev-secret-change-me
+    ports:
+      - "5000:5000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build: ./worker
+    environment:
+      DATABASE_URL: postgresql://scheduler:scheduler@db:5432/scheduler
+      MAX_CONCURRENT_JOBS: 5
+      POLL_INTERVAL_SECONDS: 2
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
+    # Scale to prove atomic claiming: docker-compose up --scale worker=3
+
+  scheduler:
+    build: ./worker
+    command: ["python", "scheduler.py"]
+    environment:
+      DATABASE_URL: postgresql://scheduler:scheduler@db:5432/scheduler
+      SCHEDULER_POLL_INTERVAL_SECONDS: 10
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
+    # Exactly one replica — spawning is idempotent-safe via row locking, but
+    # there's no reason to run more than one; it's not concurrency-bound.
+
+  dashboard:
+    image: nginx:alpine
+    volumes:
+      - ./dashboard:/usr/share/nginx/html:ro
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
