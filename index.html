@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Job Scheduler Dashboard</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", sans-serif; margin: 0; background: #0f1115; color: #e6e6e6; }
+  header { padding: 14px 24px; background: #171a21; border-bottom: 1px solid #2a2e37; display: flex; justify-content: space-between; align-items: center; }
+  h1 { font-size: 17px; margin: 0; }
+  .muted { color: #9aa0ab; font-size: 12px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 24px; max-width: 1200px; margin: 0 auto; }
+  .card { background: #171a21; border: 1px solid #2a2e37; border-radius: 8px; padding: 16px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; color: #9aa0ab; margin: 0 0 12px; letter-spacing: 0.03em; }
+  .span2 { grid-column: span 2; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #2a2e37; }
+  th { color: #7a808b; font-weight: 500; font-size: 11px; text-transform: uppercase; }
+  .status { padding: 2px 8px; border-radius: 4px; font-size: 11px; white-space: nowrap; }
+  .status.queued, .status.scheduled { background: #2b3a55; color: #7ea8ff; }
+  .status.running, .status.claimed { background: #3a3320; color: #ffd479; }
+  .status.completed { background: #1f3d2a; color: #5fd98a; }
+  .status.failed, .status.dead { background: #3d1f22; color: #ff7a7a; }
+  .status.alive { background: #1f3d2a; color: #5fd98a; }
+  input, select, button { background: #0f1115; color: #e6e6e6; border: 1px solid #3a3e47; border-radius: 4px; padding: 7px 10px; font-size: 13px; }
+  input, select { width: 100%; margin-bottom: 8px; }
+  button { background: #2a2e37; cursor: pointer; width: auto; }
+  button:hover { background: #3a3e47; }
+  button.primary { background: #2b5aa8; border-color: #2b5aa8; }
+  button.primary:hover { background: #3468bd; }
+  .form-row { display: flex; gap: 8px; }
+  .form-row > * { flex: 1; }
+  .empty { color: #6a6f7a; font-size: 13px; padding: 8px 0; }
+  #auth-screen { max-width: 340px; margin: 80px auto; }
+  .toggle-link { color: #7ea8ff; cursor: pointer; font-size: 12px; }
+  .error-msg { color: #ff7a7a; font-size: 12px; margin-bottom: 8px; }
+  #app { display: none; }
+  .field-hint { font-size: 11px; color: #6a6f7a; margin: -4px 0 8px; }
+</style>
+</head>
+<body>
+
+<!-- ============ AUTH SCREEN ============ -->
+<div id="auth-screen">
+  <div class="card">
+    <h2 id="auth-title">Log In</h2>
+    <div id="auth-error" class="error-msg"></div>
+    <input id="auth-name" placeholder="Name" style="display:none" />
+    <input id="auth-email" placeholder="Email" type="email" />
+    <input id="auth-password" placeholder="Password" type="password" />
+    <button class="primary" style="width:100%" onclick="submitAuth()">Log In</button>
+    <div style="margin-top:10px" class="toggle-link" onclick="toggleAuthMode()">Need an account? Sign up</div>
+  </div>
+</div>
+
+<!-- ============ MAIN APP ============ -->
+<div id="app">
+<header>
+  <h1>⏱ Job Scheduler Dashboard</h1>
+  <div><span class="muted" id="user-email"></span> &nbsp; <button onclick="logout()">Log out</button></div>
+</header>
+
+<div class="grid">
+
+  <div class="card">
+    <h2>New Project</h2>
+    <div class="form-row">
+      <input id="new-project-name" placeholder="Project name" />
+      <button class="primary" onclick="createProject()">Create</button>
+    </div>
+    <select id="project-select" onchange="onProjectChange()"></select>
+    <div class="empty" id="no-projects-msg">No projects yet — create one above.</div>
+  </div>
+
+  <div class="card">
+    <h2>New Queue</h2>
+    <div class="form-row">
+      <input id="new-queue-name" placeholder="Queue name" />
+      <input id="new-queue-priority" placeholder="Priority" type="number" value="0" />
+    </div>
+    <div class="form-row">
+      <select id="new-queue-strategy">
+        <option value="fixed">Fixed backoff</option>
+        <option value="linear">Linear backoff</option>
+        <option value="exponential">Exponential backoff</option>
+      </select>
+      <input id="new-queue-max-retries" placeholder="Max retries" type="number" value="3" />
+    </div>
+    <button class="primary" style="width:100%" onclick="createQueue()">Create Queue</button>
+  </div>
+
+  <div class="card span2">
+    <h2>Queues <span class="muted" id="queues-project-label"></span></h2>
+    <table id="queues-table"><thead><tr><th>Name</th><th>Priority</th><th>Concurrency</th><th>Status</th><th>Stats</th><th></th></tr></thead><tbody></tbody></table>
+    <div class="empty" id="no-queues-msg" style="display:none">No queues in this project yet.</div>
+  </div>
+
+  <div class="card span2">
+    <h2>New Job</h2>
+    <div class="form-row">
+      <select id="job-queue-select"></select>
+      <select id="job-type-select" onchange="onJobTypeChange()">
+        <option value="immediate">Immediate</option>
+        <option value="delayed">Delayed</option>
+        <option value="scheduled">Scheduled</option>
+        <option value="recurring">Recurring (cron)</option>
+      </select>
+    </div>
+    <div id="job-type-extra-field" style="display:none"></div>
+    <div class="form-row">
+      <input id="job-simulate-duration" placeholder="Simulated duration (sec)" type="number" value="2" />
+      <select id="job-simulate-failure">
+        <option value="false">Simulate success</option>
+        <option value="true">Simulate failure (test retries)</option>
+      </select>
+    </div>
+    <div class="field-hint">Job execution is simulated for this demo — swap execute_job() in worker.py for real task logic.</div>
+    <button class="primary" onclick="createJob()">Submit Job</button>
+  </div>
+
+  <div class="card">
+    <h2>Workers</h2>
+    <table id="workers-table"><thead><tr><th>Name</th><th>Status</th><th>Last Heartbeat</th></tr></thead><tbody></tbody></table>
+    <div class="empty" id="no-workers-msg" style="display:none">No workers reporting yet. Start the worker service.</div>
+  </div>
+
+  <div class="card">
+    <h2>Filter Job Explorer</h2>
+    <select id="jobs-filter-status" onchange="loadJobs()">
+      <option value="">All statuses</option>
+      <option value="queued">Queued</option>
+      <option value="scheduled">Scheduled</option>
+      <option value="running">Running</option>
+      <option value="completed">Completed</option>
+      <option value="failed">Failed</option>
+      <option value="dead">Dead (DLQ)</option>
+    </select>
+    <div class="muted">Auto-refreshes every 3s.</div>
+  </div>
+
+  <div class="card span2">
+    <h2>Job Explorer</h2>
+    <table id="jobs-table"><thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Attempts</th><th>Created</th><th></th></tr></thead><tbody></tbody></table>
+    <div class="empty" id="no-jobs-msg" style="display:none">No jobs match this filter yet.</div>
+  </div>
+
+</div>
+</div>
+
+<script>
+const API_BASE = window.API_BASE || "http://localhost:5000/api";
+let token = localStorage.getItem("token") || "";
+let userEmail = localStorage.getItem("userEmail") || "";
+let authMode = "login";
+let projects = [];
+let queues = [];
+let currentProjectId = null;
+
+function toggleAuthMode() {
+  authMode = authMode === "login" ? "signup" : "login";
+  document.getElementById("auth-title").textContent = authMode === "login" ? "Log In" : "Sign Up";
+  document.getElementById("auth-name").style.display = authMode === "signup" ? "block" : "none";
+  document.querySelector(".toggle-link").textContent = authMode === "login" ? "Need an account? Sign up" : "Already have an account? Log in";
+}
+
+async function submitAuth() {
+  const email = document.getElementById("auth-email").value.trim();
+  const password = document.getElementById("auth-password").value;
+  const name = document.getElementById("auth-name").value.trim();
+  const errorEl = document.getElementById("auth-error");
+  errorEl.textContent = "";
+  if (!email || !password) { errorEl.textContent = "Email and password are required."; return; }
+
+  const path = authMode === "login" ? "/auth/login" : "/auth/signup";
+  const body = authMode === "login" ? { email, password } : { email, password, name };
+
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) { errorEl.textContent = data.error || "Something went wrong."; return; }
+    token = data.access_token;
+    userEmail = email;
+    localStorage.setItem("token", token);
+    localStorage.setItem("userEmail", email);
+    showApp();
+  } catch (e) {
+    errorEl.textContent = "Could not reach the API. Is it running at " + API_BASE + "?";
+  }
+}
+
+function logout() {
+  localStorage.removeItem("token");
+  localStorage.removeItem("userEmail");
+  location.reload();
+}
+
+function showApp() {
+  document.getElementById("auth-screen").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  document.getElementById("user-email").textContent = userEmail;
+  bootstrap();
+}
+
+async function apiGet(path) {
+  const res = await fetch(`${API_BASE}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (res.status === 401) { logout(); return null; }
+  if (!res.ok) return null;
+  return res.json();
+}
+async function apiPost(path, body) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, data };
+}
+
+function statusBadge(status) { return `<span class="status ${status}">${status}</span>`; }
+
+async function loadProjects() {
+  projects = (await apiGet("/projects")) || [];
+  const select = document.getElementById("project-select");
+  select.innerHTML = "";
+  document.getElementById("no-projects-msg").style.display = projects.length ? "none" : "block";
+  projects.forEach(p => {
+    const opt = document.createElement("option");
+    opt.value = p.id; opt.textContent = p.name;
+    select.appendChild(opt);
+  });
+  if (projects.length && !currentProjectId) currentProjectId = projects[0].id;
+  if (currentProjectId) select.value = currentProjectId;
+}
+
+function onProjectChange() {
+  currentProjectId = document.getElementById("project-select").value;
+  refreshQueueDependentData();
+}
+
+async function createProject() {
+  const name = document.getElementById("new-project-name").value.trim();
+  if (!name) return;
+  const { ok, data } = await apiPost("/projects", { name });
+  if (ok) {
+    document.getElementById("new-project-name").value = "";
+    currentProjectId = data.id;
+    await loadProjects();
+    refreshQueueDependentData();
+  }
+}
+
+async function loadQueues() {
+  if (!currentProjectId) { queues = []; renderQueues(); renderJobQueueSelect(); return; }
+  queues = (await apiGet(`/queues/by-project/${currentProjectId}`)) || [];
+  renderQueues();
+  renderJobQueueSelect();
+}
+
+function renderQueues() {
+  const tbody = document.querySelector("#queues-table tbody");
+  tbody.innerHTML = "";
+  document.getElementById("no-queues-msg").style.display = queues.length ? "none" : "block";
+  queues.forEach(async q => {
+    const stats = await apiGet(`/queues/${q.id}/stats`);
+    const row = document.createElement("tr");
+    const statsStr = stats ? Object.entries(stats.counts).filter(([,c]) => c > 0).map(([s,c]) => `${s}:${c}`).join(" ") : "-";
+    row.innerHTML = `
+      <td>${q.name}</td><td>${q.priority}</td><td>${q.concurrency_limit || "-"}</td>
+      <td>${statusBadge(stats && stats.is_paused ? "failed" : "completed")} ${stats && stats.is_paused ? "paused" : "active"}</td>
+      <td class="muted">${statsStr || "no jobs yet"}</td>
+      <td><button onclick="togglePause('${q.id}', ${stats ? stats.is_paused : false})">${stats && stats.is_paused ? "Resume" : "Pause"}</button></td>`;
+    tbody.appendChild(row);
+  });
+}
+
+async function togglePause(queueId, isPaused) {
+  await apiPost(`/queues/${queueId}/${isPaused ? "resume" : "pause"}`);
+  renderQueues();
+}
+
+async function createQueue() {
+  if (!currentProjectId) { alert("Create a project first."); return; }
+  const name = document.getElementById("new-queue-name").value.trim();
+  if (!name) return;
+  const { ok, data } = await apiPost("/queues", {
+    project_id: currentProjectId,
+    name,
+    priority: parseInt(document.getElementById("new-queue-priority").value || 0),
+    retry_strategy: document.getElementById("new-queue-strategy").value,
+    max_retries: parseInt(document.getElementById("new-queue-max-retries").value || 3),
+  });
+  if (ok) {
+    document.getElementById("new-queue-name").value = "";
+    await loadQueues();
+  } else {
+    alert(data.error || "Failed to create queue");
+  }
+}
+
+function renderJobQueueSelect() {
+  const select = document.getElementById("job-queue-select");
+  select.innerHTML = "";
+  queues.forEach(q => {
+    const opt = document.createElement("option");
+    opt.value = q.id; opt.textContent = q.name;
+    select.appendChild(opt);
+  });
+}
+
+function refreshQueueDependentData() {
+  document.getElementById("queues-project-label").textContent =
+    currentProjectId ? `— ${(projects.find(p => p.id === currentProjectId) || {}).name || ""}` : "";
+  loadQueues();
+}
+
+function onJobTypeChange() {
+  const type = document.getElementById("job-type-select").value;
+  const container = document.getElementById("job-type-extra-field");
+  container.style.display = "block";
+  if (type === "delayed") {
+    container.innerHTML = `<input id="job-extra-input" placeholder="Delay (seconds)" type="number" value="10" />`;
+  } else if (type === "scheduled") {
+    container.innerHTML = `<input id="job-extra-input" placeholder="Run at" type="datetime-local" />`;
+  } else if (type === "recurring") {
+    container.innerHTML = `<input id="job-extra-input" placeholder="Cron expression" value="*/5 * * * *" />`;
+  } else {
+    container.style.display = "none";
+    container.innerHTML = "";
+  }
+}
+
+async function createJob() {
+  const queueId = document.getElementById("job-queue-select").value;
+  if (!queueId) { alert("Create a queue first."); return; }
+  const jobType = document.getElementById("job-type-select").value;
+
+  const payload = {
+    simulate_duration_seconds: parseInt(document.getElementById("job-simulate-duration").value || 1),
+    simulate_failure: document.getElementById("job-simulate-failure").value === "true",
+    failure_message: "Simulated failure from dashboard",
+  };
+
+  const body = { queue_id: queueId, job_type: jobType, payload };
+  const extraInput = document.getElementById("job-extra-input");
+
+  if (jobType === "delayed") body.delay_seconds = parseInt(extraInput.value || 0);
+  if (jobType === "scheduled") body.run_at = new Date(extraInput.value).toISOString();
+  if (jobType === "recurring") body.cron_expression = extraInput.value;
+
+  const { ok, data } = await apiPost("/jobs", body);
+  if (!ok) alert(data.error || "Failed to create job");
+  loadJobs();
+}
+
+async function loadJobs() {
+  const status = document.getElementById("jobs-filter-status").value;
+  const qs = status ? `?status=${status}&per_page=25` : "?per_page=25";
+  const data = await apiGet(`/jobs${qs}`);
+  const tbody = document.querySelector("#jobs-table tbody");
+  tbody.innerHTML = "";
+  const jobs = (data && data.jobs) || [];
+  document.getElementById("no-jobs-msg").style.display = jobs.length ? "none" : "block";
+  jobs.forEach(j => {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td class="muted">${j.id.slice(0,8)}</td>
+      <td>${j.job_type}</td>
+      <td>${statusBadge(j.status)}</td>
+      <td>${j.attempt_count}</td>
+      <td class="muted">${new Date(j.created_at).toLocaleTimeString()}</td>
+      <td>${["failed","dead"].includes(j.status) ? `<button onclick="retryJob('${j.id}')">Retry</button>` : ""}</td>`;
+    tbody.appendChild(row);
+  });
+}
+
+async function retryJob(id) {
+  await apiPost(`/jobs/${id}/retry`);
+  loadJobs();
+}
+
+async function loadWorkers() {
+  const workers = (await apiGet("/workers")) || [];
+  const tbody = document.querySelector("#workers-table tbody");
+  tbody.innerHTML = "";
+  document.getElementById("no-workers-msg").style.display = workers.length ? "none" : "block";
+  workers.forEach(w => {
+    const row = document.createElement("tr");
+    row.innerHTML = `<td>${w.name}</td><td>${statusBadge(w.status)}</td><td class="muted">${new Date(w.last_heartbeat).toLocaleTimeString()}</td>`;
+    tbody.appendChild(row);
+  });
+}
+
+async function bootstrap() {
+  await loadProjects();
+  refreshQueueDependentData();
+  onJobTypeChange();
+  await Promise.all([loadJobs(), loadWorkers()]);
+  setInterval(() => { loadJobs(); loadWorkers(); renderQueues(); }, 3000);
+}
+
+if (token) { showApp(); } else { document.getElementById("auth-screen").style.display = "block"; }
+</script>
+</body>
+</html>
